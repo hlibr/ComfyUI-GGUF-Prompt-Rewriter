@@ -37,7 +37,7 @@ Drops the cached model from memory so you can switch to another GGUF cleanly.
 
 The node scans these directories for `.gguf` files:
 
-- `~/Documents/ComfyUI/models/llm_gguf`
+- `ComfyUI/models/llm_gguf`
 - `~/AI`
 
 Put your local GGUF files in either location and restart ComfyUI.
@@ -47,14 +47,14 @@ Put your local GGUF files in either location and restart ComfyUI.
 Clone into your ComfyUI custom nodes directory:
 
 ```bash
-cd /Users/gleb/Documents/ComfyUI/custom_nodes
-git clone <your-repo-url> comfyui_gguf_prompt_rewriter
+cd /path/to/ComfyUI/custom_nodes
+git clone https://github.com/hlibr/ComfyUI-GGUF-Prompt-Rewriter.git
 ```
 
 Install dependencies into the same venv ComfyUI uses:
 
 ```bash
-/Users/gleb/Documents/ComfyUI/.venv/bin/python -m pip install -r /Users/gleb/Documents/ComfyUI/custom_nodes/comfyui_gguf_prompt_rewriter/requirements.txt
+/path/to/ComfyUI/.venv/bin/python -m pip install -r /path/to/ComfyUI/custom_nodes/ComfyUI-GGUF-Prompt-Rewriter/requirements.txt
 ```
 
 Restart ComfyUI.
@@ -75,14 +75,6 @@ For Gemma-style instruct models:
 - `top_k = 40`
 - `repeat_penalty = 1.1`
 - `n_gpu_layers = -1`
-
-## Publishing
-
-This folder is self-contained and can be published as its own repository.
-
-Suggested repository name:
-
-- `comfyui-gguf-prompt-rewriter`
 
 ## License
 
