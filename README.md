@@ -65,17 +65,6 @@ Restart ComfyUI.
 
 ComfyUI itself provides the node runtime and `folder_paths`.
 
-## Recommended Defaults
-
-For Gemma-style instruct models:
-
-- `template = gemma`
-- `temperature = 0.5`
-- `top_p = 0.9`
-- `top_k = 40`
-- `repeat_penalty = 1.1`
-- `n_gpu_layers = -1`
-
 ## License
 
 MIT
