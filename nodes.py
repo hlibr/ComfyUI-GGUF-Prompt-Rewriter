@@ -64,41 +64,41 @@ def _resolve_model_path(model_name: str) -> str:
     return folder_paths.get_full_path("llm_gguf", model_name)
 
 
-def _build_prompt(template: str, system_prompt: str, user_prompt: str) -> tuple[str, list[str]]:
-    system_prompt = system_prompt.strip()
-    user_prompt = user_prompt.strip()
+# def _build_prompt(template: str, system_prompt: str, user_prompt: str) -> tuple[str, list[str]]:
+#     system_prompt = system_prompt.strip()
+#     user_prompt = user_prompt.strip()
 
-    if template == "gemma":
-        prompt = (
-            "<bos><start_of_turn>user\n"
-            f"System instruction:\n{system_prompt}\n\n"
-            f"Request:\n{user_prompt}<end_of_turn>\n"
-            "<start_of_turn>model\n"
-        )
-        return prompt, ["<end_of_turn>"]
+#     if template == "gemma":
+#         prompt = (
+#             "<|turn>system\n"
+#             f"You are a helpful assistant.<turn|>\n"
+#             f"<|turn>user\n"
+#             "Hello.<turn|>"
+#         )
+#         return prompt, ["<end_of_turn>"]
 
-    if template == "llama3":
-        prompt = (
-            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
-            f"{system_prompt}<|eot_id|>"
-            "<|start_header_id|>user<|end_header_id|>\n\n"
-            f"{user_prompt}<|eot_id|>"
-            "<|start_header_id|>assistant<|end_header_id|>\n\n"
-        )
-        return prompt, ["<|eot_id|>"]
+#     if template == "llama3":
+#         prompt = (
+#             "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
+#             f"{system_prompt}<|eot_id|>"
+#             "<|start_header_id|>user<|end_header_id|>\n\n"
+#             f"{user_prompt}<|eot_id|>"
+#             "<|start_header_id|>assistant<|end_header_id|>\n\n"
+#         )
+#         return prompt, ["<|eot_id|>"]
 
-    if template == "chatml":
-        prompt = (
-            "<|im_start|>system\n"
-            f"{system_prompt}<|im_end|>\n"
-            "<|im_start|>user\n"
-            f"{user_prompt}<|im_end|>\n"
-            "<|im_start|>assistant\n"
-        )
-        return prompt, ["<|im_end|>"]
+#     if template == "chatml":
+#         prompt = (
+#             "<|im_start|>system\n"
+#             f"{system_prompt}<|im_end|>\n"
+#             "<|im_start|>user\n"
+#             f"{user_prompt}<|im_end|>\n"
+#             "<|im_start|>assistant\n"
+#         )
+#         return prompt, ["<|im_end|>"]
 
-    prompt = f"{system_prompt}\n\n{user_prompt}".strip()
-    return prompt, []
+#     prompt = f"{system_prompt}\n\n{user_prompt}".strip()
+#     return prompt, []
 
 
 def _normalize_output(text: str) -> str:
@@ -156,7 +156,6 @@ class GGUFPromptRewriter:
             },
             "optional": {
                 "system_prompt": ("STRING", {"default": DEFAULT_SYSTEM_PROMPT, "multiline": True}),
-                "template": (["gemma", "llama3", "chatml", "plain", "native_chat"], {"default": "gemma"}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
                 "max_tokens": ("INT", {"default": 160, "min": 1, "max": 4096, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 2.0, "step": 0.05}),
@@ -167,13 +166,11 @@ class GGUFPromptRewriter:
                 "n_batch": ("INT", {"default": 512, "min": 32, "max": 4096, "step": 32}),
                 "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 999, "step": 1}),
                 "n_threads": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
-                "stop_1": ("STRING", {"default": ""}),
-                "stop_2": ("STRING", {"default": ""}),
             },
         }
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("rewritten_prompt", "raw_output", "prompt_used")
+    RETURN_NAMES = ("rewritten_prompt", "raw_output")
     FUNCTION = "rewrite"
     CATEGORY = "prompt/LLM"
 
@@ -182,7 +179,6 @@ class GGUFPromptRewriter:
         model,
         user_prompt,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
-        template="gemma",
         seed=0,
         max_tokens=160,
         temperature=0.5,
@@ -193,8 +189,6 @@ class GGUFPromptRewriter:
         n_batch=512,
         n_gpu_layers=-1,
         n_threads=0,
-        stop_1="",
-        stop_2="",
     ):
         if model == "No GGUF models found":
             raise ValueError("No GGUF models found. Put GGUF files in ComfyUI/models/llm_gguf or ~/AI.")
@@ -203,38 +197,22 @@ class GGUFPromptRewriter:
         if not model_path or not os.path.exists(model_path):
             raise ValueError(f"Could not resolve GGUF model path for: {model}")
 
-        prompt, auto_stops = _build_prompt(template, system_prompt, user_prompt)
-        stops = [s for s in auto_stops + [stop_1.strip(), stop_2.strip()] if s]
-
         llm = _get_or_load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads)
-        if _should_use_native_chat(model, template):
-            response = llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt.strip()},
-                    {"role": "user", "content": user_prompt.strip()},
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                repeat_penalty=repeat_penalty,
-                seed=seed,
-                stop=stops or None,
-            )
-            raw_text = response["choices"][0]["message"]["content"]
-        else:
-            response = llm.create_completion(
-                prompt=prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                repeat_penalty=repeat_penalty,
-                seed=seed,
-                stop=stops or None,
-            )
-            raw_text = response["choices"][0]["text"]
-        return (_normalize_output(raw_text), raw_text, prompt)
+        response = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt.strip()},
+                {"role": "user", "content": user_prompt.strip()},
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repeat_penalty=repeat_penalty,
+            seed=seed,
+            # stop=stops or None,
+        )
+        raw_text = response["choices"][0]["message"]["content"]
+        return (_normalize_output(raw_text), raw_text)
 
 
 class UnloadGGUFPromptModel:
