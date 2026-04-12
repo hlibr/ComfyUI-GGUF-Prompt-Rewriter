@@ -107,13 +107,6 @@ def _normalize_output(text: str) -> str:
     return text.strip(" \n\r\t,")
 
 
-def _should_use_native_chat(model_name: str, template: str) -> bool:
-    name = model_name.lower()
-    if template == "native_chat":
-        return True
-    return template == "gemma" and ("gemma-4" in name or "gemma 4" in name)
-
-
 def _maybe_unload():
     model = _MODEL_CACHE.get("model")
     if model is not None:
@@ -211,7 +204,7 @@ class GGUFPromptRewriter:
             seed=seed,
             # stop=stops or None,
         )
-        raw_text = response["choices"][0]["message"]["content"]
+        raw_text = response["choices"][-1]["message"]["content"]
         return (_normalize_output(raw_text), raw_text)
 
 
