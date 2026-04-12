@@ -169,7 +169,7 @@ class GGUFPromptRewriter:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("rewritten_prompt", "raw_output")
     FUNCTION = "rewrite"
     CATEGORY = "prompt/LLM"
