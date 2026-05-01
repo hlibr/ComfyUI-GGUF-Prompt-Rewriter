@@ -21,11 +21,11 @@ Outputs:
 Notes:
 
 - Tested with uncensored Gemma 4 and Qwen3.6 models
-- The node caches one loaded model in memory for speed.
+- The node caches one loaded model in memory for speed - may be undesirable if you're memory-limited. In that case use
 
 ### `Unload GGUF Prompt Model`
 
-Drops the cached model from memory so you can switch to another GGUF cleanly.
+Drops the cached model from memory.
 
 ## Model Locations
 
