@@ -7,14 +7,13 @@ import folder_paths
 from llama_cpp import Llama
 
 
-DEFAULT_SYSTEM_PROMPT = """You convert plain-English image descriptions into high-quality danbooru-style tags.
+DEFAULT_SYSTEM_PROMPT = """Convert plain-English image descriptions into high-quality danbooru tags that will be fed to an image generation model.
 
 Rules:
 - Output only a comma-separated tag list and nothing else
-- Describe character identity, action, clothing, environment, and strong visual details
-- Do not invent extra subjects
-- If the prompt implies one subject, keep it single-subject
-- Do not use _ within the tags, instead use spaces
+- Describe character identity, action, clothing, body, environment, and strong visual details
+- Add professional scene details, describe lighting, shadows, camera angle
+- Do not use _ (underscore) within the tags, instead use spaces (e.g. not black_hair - black hair)
 """
 
 _MODEL_LOCK = threading.Lock()
