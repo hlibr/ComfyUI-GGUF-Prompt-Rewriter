@@ -14,6 +14,7 @@ Rules:
 - Describe character identity, action, clothing, environment, and strong visual details
 - Do not invent extra subjects
 - If the prompt implies one subject, keep it single-subject
+- Do not use _ within the tags, instead use spaces
 """
 
 _MODEL_LOCK = threading.Lock()
