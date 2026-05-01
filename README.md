@@ -26,7 +26,7 @@ Supported prompt modes:
 
 Notes:
 
-- Gemma 4 models are automatically routed through native chat mode when `template=gemma`.
+- Tested with uncensored Gemma 4 and Qwen3.6 models
 - The node caches one loaded model in memory for speed.
 
 ### `Unload GGUF Prompt Model`
