@@ -4,6 +4,9 @@ Standalone ComfyUI custom nodes for rewriting plain-English prompts with a local
 
 This package was designed for prompt rewriting and booru-style tag generation without relying on remote APIs or merging into other prompt/tagger extensions.
 
+<img width="292" height="618" alt="Screenshot 2026-05-01 at 10 00 45 AM" src="https://github.com/user-attachments/assets/0393bfb2-e3ef-44dc-af4f-0b46d54d91b2" />
+
+
 ## Nodes
 
 ### `GGUF Prompt Rewriter`
