@@ -7,19 +7,13 @@ import folder_paths
 from llama_cpp import Llama
 
 
-DEFAULT_SYSTEM_PROMPT = """You convert plain-English anime image descriptions into high-quality booru-style tags.
+DEFAULT_SYSTEM_PROMPT = """You convert plain-English image descriptions into high-quality danbooru-style tags.
 
 Rules:
-- Output only a comma-separated tag list
-- No prose
-- No explanations
-- No markdown
-- Prefer common Danbooru-style or booru-style tags
-- Keep character identity, action, clothing, environment, and strong visual details
+- Output only a comma-separated tag list and nothing else
+- Describe character identity, action, clothing, environment, and strong visual details
 - Do not invent extra subjects
 - If the prompt implies one subject, keep it single-subject
-- Avoid low-confidence tags
-- Keep the result concise and useful
 """
 
 _MODEL_LOCK = threading.Lock()
@@ -102,6 +96,10 @@ def _resolve_model_path(model_name: str) -> str:
 
 
 def _normalize_output(text: str) -> str:
+    # Strip thinking blocks (common in DeepSeek-R1 and similar)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    # Strip other channel tags
     text = re.sub(r"^(?:<\|channel\>[^ \n]+\n<channel\|>\s*)+", "", text)
     text = re.sub(r"^(?:<\|channel\|>[^ \n]+\n<channel\|>\s*)+", "", text)
     return text.strip(" \n\r\t,")
@@ -119,12 +117,12 @@ def _maybe_unload():
     gc.collect()
 
 
-def _get_or_load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_threads: int):
-    cache_key = (model_path, n_ctx, n_batch, n_gpu_layers, n_threads)
+def _get_or_load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_threads: int, enable_thinking: bool):
+    cache_key = (model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
     with _MODEL_LOCK:
         if _MODEL_CACHE["key"] == cache_key and _MODEL_CACHE["model"] is not None:
             return _MODEL_CACHE["model"]
-
+ 
         _maybe_unload()
         model = Llama(
             model_path=model_path,
@@ -134,6 +132,19 @@ def _get_or_load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: 
             n_threads=None if n_threads <= 0 else n_threads,
             verbose=False,
         )
+
+        import llama_cpp.llama_chat_format
+        base_chat_handler = (
+            model.chat_handler
+            or model._chat_handlers.get(model.chat_format)
+            or llama_cpp.llama_chat_format.get_chat_completion_handler(model.chat_format)
+        )
+
+        def chat_handler_with_kwargs(*args, **kwargs):
+            return base_chat_handler(*args, **{"enable_thinking": enable_thinking, **kwargs})
+            
+        model.chat_handler = chat_handler_with_kwargs
+
         _MODEL_CACHE["key"] = cache_key
         _MODEL_CACHE["model"] = model
         return model
@@ -149,6 +160,7 @@ class GGUFPromptRewriter:
             },
             "optional": {
                 "system_prompt": ("STRING", {"default": DEFAULT_SYSTEM_PROMPT, "multiline": True}),
+                "enable_thinking": ("BOOLEAN", {"default": False}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
                 "max_tokens": ("INT", {"default": 160, "min": 1, "max": 4096, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 2.0, "step": 0.05}),
@@ -163,7 +175,7 @@ class GGUFPromptRewriter:
         }
 
     RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("rewritten_prompt", "raw_output")
+    RETURN_NAMES = ["rewritten_prompt", "raw_output"]
     FUNCTION = "rewrite"
     CATEGORY = "prompt/LLM"
 
@@ -172,6 +184,7 @@ class GGUFPromptRewriter:
         model,
         user_prompt,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
+        enable_thinking=False,
         seed=0,
         max_tokens=160,
         temperature=0.5,
@@ -190,7 +203,7 @@ class GGUFPromptRewriter:
         if not model_path or not os.path.exists(model_path):
             raise ValueError(f"Could not resolve GGUF model path for: {model}")
 
-        llm = _get_or_load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads)
+        llm = _get_or_load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
         response = llm.create_chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt.strip()},
@@ -202,7 +215,6 @@ class GGUFPromptRewriter:
             top_k=top_k,
             repeat_penalty=repeat_penalty,
             seed=seed,
-            # stop=stops or None,
         )
         raw_text = response["choices"][-1]["message"]["content"]
         return (_normalize_output(raw_text), raw_text)
@@ -210,7 +222,7 @@ class GGUFPromptRewriter:
 
 class UnloadGGUFPromptModel:
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("status",)
+    RETURN_NAMES = ["status"]
     FUNCTION = "unload"
     CATEGORY = "prompt/LLM"
 
