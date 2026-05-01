@@ -7,7 +7,7 @@ import folder_paths
 from llama_cpp import Llama
 
 
-DEFAULT_SYSTEM_PROMPT = """Convert plain-English image descriptions into high-quality danbooru tags that will be fed to an image generation model.
+DEFAULT_SYSTEM_PROMPT = """Convert plain-English image descriptions into high-quality danbooru tags that will be fed into an image generation model.
 
 Rules:
 - Output only a comma-separated tag list and nothing else
