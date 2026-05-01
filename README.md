@@ -14,15 +14,6 @@ Outputs:
 
 - `rewritten_prompt`
 - `raw_output`
-- `prompt_used`
-
-Supported prompt modes:
-
-- `gemma`
-- `llama3`
-- `chatml`
-- `plain`
-- `native_chat`
 
 Notes:
 
