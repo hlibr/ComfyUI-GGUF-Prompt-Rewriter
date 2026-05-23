@@ -17,7 +17,6 @@ Rules:
 """
 
 _MODEL_LOCK = threading.Lock()
-_MODEL_CACHE = {"key": None, "model": None}
 
 
 def _register_llm_gguf_paths():
@@ -105,49 +104,37 @@ def _normalize_output(text: str) -> str:
     return text.strip(" \n\r\t,")
 
 
-def _maybe_unload():
-    model = _MODEL_CACHE.get("model")
+def _close_model(model):
     if model is not None:
         try:
             model.close()
         except Exception:
             pass
-    _MODEL_CACHE["model"] = None
-    _MODEL_CACHE["key"] = None
-    gc.collect()
 
 
-def _get_or_load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_threads: int, enable_thinking: bool):
-    cache_key = (model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
-    with _MODEL_LOCK:
-        if _MODEL_CACHE["key"] == cache_key and _MODEL_CACHE["model"] is not None:
-            return _MODEL_CACHE["model"]
- 
-        _maybe_unload()
-        model = Llama(
-            model_path=model_path,
-            n_ctx=n_ctx,
-            n_batch=n_batch,
-            n_gpu_layers=n_gpu_layers,
-            n_threads=None if n_threads <= 0 else n_threads,
-            verbose=False,
-        )
+def _load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_threads: int, enable_thinking: bool):
+    model = Llama(
+        model_path=model_path,
+        n_ctx=n_ctx,
+        n_batch=n_batch,
+        n_gpu_layers=n_gpu_layers,
+        n_threads=None if n_threads <= 0 else n_threads,
+        verbose=False,
+    )
 
-        import llama_cpp.llama_chat_format
-        base_chat_handler = (
-            model.chat_handler
-            or model._chat_handlers.get(model.chat_format)
-            or llama_cpp.llama_chat_format.get_chat_completion_handler(model.chat_format)
-        )
+    import llama_cpp.llama_chat_format
 
-        def chat_handler_with_kwargs(*args, **kwargs):
-            return base_chat_handler(*args, **{"enable_thinking": enable_thinking, **kwargs})
-            
-        model.chat_handler = chat_handler_with_kwargs
+    base_chat_handler = (
+        model.chat_handler
+        or model._chat_handlers.get(model.chat_format)
+        or llama_cpp.llama_chat_format.get_chat_completion_handler(model.chat_format)
+    )
 
-        _MODEL_CACHE["key"] = cache_key
-        _MODEL_CACHE["model"] = model
-        return model
+    def chat_handler_with_kwargs(*args, **kwargs):
+        return base_chat_handler(*args, **{"enable_thinking": enable_thinking, **kwargs})
+
+    model.chat_handler = chat_handler_with_kwargs
+    return model
 
 
 class GGUFPromptRewriter:
@@ -207,43 +194,36 @@ class GGUFPromptRewriter:
         if not model_path or not os.path.exists(model_path):
             raise ValueError(f"Could not resolve GGUF model path for: {model}")
 
-        llm = _get_or_load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
-        response = llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt.strip()},
-                {"role": "user", "content": user_prompt.strip()},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            min_p=min_p,
-            presence_penalty=presence_penalty,
-            repeat_penalty=repeat_penalty,
-            seed=seed,
-        )
+        with _MODEL_LOCK:
+            llm = None
+            try:
+                llm = _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
+                response = llm.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": system_prompt.strip()},
+                        {"role": "user", "content": user_prompt.strip()},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    min_p=min_p,
+                    presence_penalty=presence_penalty,
+                    repeat_penalty=repeat_penalty,
+                    seed=seed,
+                )
+            finally:
+                _close_model(llm)
+                llm = None
+                gc.collect()
         raw_text = response["choices"][-1]["message"]["content"]
         return (_normalize_output(raw_text), raw_text)
 
 
-class UnloadGGUFPromptModel:
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ["status"]
-    FUNCTION = "unload"
-    CATEGORY = "prompt/LLM"
-
-    def unload(self):
-        with _MODEL_LOCK:
-            _maybe_unload()
-        return ("Unloaded GGUF prompt model",)
-
-
 NODE_CLASS_MAPPINGS = {
     "GGUFPromptRewriter": GGUFPromptRewriter,
-    "UnloadGGUFPromptModel": UnloadGGUFPromptModel,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGUFPromptRewriter": "GGUF Prompt Rewriter",
-    "UnloadGGUFPromptModel": "Unload GGUF Prompt Model",
 }
