@@ -5,6 +5,7 @@ import threading
 
 import folder_paths
 from llama_cpp import Llama
+from collections import OrderedDict
 
 
 DEFAULT_SYSTEM_PROMPT = """Convert plain-English image descriptions into high-quality danbooru tags that will be fed into an image generation model.
@@ -160,6 +161,7 @@ class GGUFPromptRewriter:
                 "n_batch": ("INT", {"default": 512, "min": 32, "max": 4096, "step": 32}),
                 "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 999, "step": 1}),
                 "n_threads": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
+                "ignore_cache": ("BOOLEAN", {"default": False}),
             },
         }
 
@@ -168,12 +170,19 @@ class GGUFPromptRewriter:
     FUNCTION = "rewrite"
     CATEGORY = "prompt/LLM"
 
+    def __init__(self):
+        # LRU cache : { cache_key: (normalized_output, raw_output) }
+        self._cache = OrderedDict()
+        self._cache_size = 50
+        self._cache_lock = threading.Lock()
+
     def rewrite(
         self,
         model,
         user_prompt,
         system_prompt=DEFAULT_SYSTEM_PROMPT,
         enable_thinking=False,
+        ignore_cache=False,
         seed=0,
         max_tokens=160,
         temperature=0.5,
@@ -187,6 +196,49 @@ class GGUFPromptRewriter:
         n_gpu_layers=-1,
         n_threads=0,
     ):
+        
+        cache_key = (
+            model,
+            user_prompt,
+            system_prompt,
+            enable_thinking,
+            seed,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            min_p,
+            presence_penalty,
+            repeat_penalty,
+            n_ctx,
+            n_batch,
+            n_gpu_layers,
+            n_threads,
+        )
+
+        # ------------------------------------------------------------
+        # LOG IMMEDIATELY WHEN PROMPT ARRIVES
+        # ------------------------------------------------------------
+        if not ignore_cache:
+            with self._cache_lock:
+                cache_hit = cache_key in self._cache
+            if cache_hit:
+                print("[INFO] GGUF Rewriter -> Input prompt found, using cached")
+            else:
+                print(f"[INFO] GGUF Rewriter -> New prompt found: {user_prompt[:80]}")
+        else:
+            print(f"[INFO] GGUF Rewriter -> Cache bypassed, forcing rewrite: {user_prompt[:80]}")
+
+        # ------------------------------------------------------------
+        # LRU CACHE CHECK
+        # ------------------------------------------------------------
+        if not ignore_cache:
+            with self._cache_lock:
+                if cache_key in self._cache:
+                    self._cache.move_to_end(cache_key)
+                    normalized_cached, raw_cached = self._cache[cache_key]
+                    return (normalized_cached, raw_cached)
+
         if model == "No GGUF models found":
             raise ValueError("No GGUF models found. Put GGUF files in ComfyUI/models/llm_gguf or ~/AI.")
 
@@ -217,7 +269,21 @@ class GGUFPromptRewriter:
                 llm = None
                 gc.collect()
         raw_text = response["choices"][-1]["message"]["content"]
-        return (_normalize_output(raw_text), raw_text)
+        normalized = _normalize_output(raw_text)
+
+        # ------------------------------------------------------------
+        # UPDATE LRU CACHE
+        # ------------------------------------------------------------
+        with self._cache_lock:
+            # Store both normalized and raw output
+            self._cache[cache_key] = (normalized, raw_text)
+            self._cache.move_to_end(cache_key)
+
+            # Enforce max size
+            if len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)  # remove oldest
+
+        return (normalized, raw_text)
 
 
 NODE_CLASS_MAPPINGS = {
