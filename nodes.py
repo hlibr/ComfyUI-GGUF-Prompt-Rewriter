@@ -103,9 +103,9 @@ def _normalize_output(text: str) -> str:
     # (handles cases where opening tag is missing, like Qwen's format)
     text = re.sub(r"^.*?</think>\s*", "", text, flags=re.DOTALL)
     text = re.sub(r"^.*?</thinking>\s*", "", text, flags=re.DOTALL)
-    # Strip other channel tags
-    text = re.sub(r"^(?:<\|channel\>[^ \n]+\n<channel\|>\s*)+", "", text)
-    text = re.sub(r"^(?:<\|channel\|>[^ \n]+\n<channel\|>\s*)+", "", text)
+    # Strip Gemma-style channel tags: <|channel>NAME...content...<channel|>
+    text = re.sub(r"<\|channel\>[^\n]*\n.*?<channel\|>\s*", "", text, flags=re.DOTALL)
+    text = re.sub(r"<\|channel\|>[^\n]*\n.*?<channel\|>\s*", "", text, flags=re.DOTALL)
     return text.strip(" \n\r\t,")
 
 
