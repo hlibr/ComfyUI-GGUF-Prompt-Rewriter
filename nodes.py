@@ -263,16 +263,17 @@ class GGUFPromptRewriter:
         normalized = _normalize_output(raw_text)
 
         # ------------------------------------------------------------
-        # UPDATE LRU CACHE
+        # UPDATE LRU CACHE (only if not ignoring cache)
         # ------------------------------------------------------------
-        with self._shared_cache_lock:
-            # Store both normalized and raw output
-            self._shared_cache[cache_key] = (normalized, raw_text)
-            self._shared_cache.move_to_end(cache_key)
+        if not ignore_cache:
+            with self._shared_cache_lock:
+                # Store both normalized and raw output
+                self._shared_cache[cache_key] = (normalized, raw_text)
+                self._shared_cache.move_to_end(cache_key)
 
-            # Enforce max size
-            if len(self._shared_cache) > self._cache_size:
-                self._shared_cache.popitem(last=False)  # remove oldest
+                # Enforce max size
+                if len(self._shared_cache) > self._cache_size:
+                    self._shared_cache.popitem(last=False)  # remove oldest
 
         return (normalized, raw_text)
 
