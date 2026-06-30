@@ -96,9 +96,13 @@ def _resolve_model_path(model_name: str) -> str:
 
 
 def _normalize_output(text: str) -> str:
-    # Strip thinking blocks (common in DeepSeek-R1 and similar)
+    # First, handle standard paired tags (if present)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    # Then strip everything before and including any remaining closing tags
+    # (handles cases where opening tag is missing, like Qwen's format)
+    text = re.sub(r"^.*?</think>\s*", "", text, flags=re.DOTALL)
+    text = re.sub(r"^.*?</thinking>\s*", "", text, flags=re.DOTALL)
     # Strip other channel tags
     text = re.sub(r"^(?:<\|channel\>[^ \n]+\n<channel\|>\s*)+", "", text)
     text = re.sub(r"^(?:<\|channel\|>[^ \n]+\n<channel\|>\s*)+", "", text)
