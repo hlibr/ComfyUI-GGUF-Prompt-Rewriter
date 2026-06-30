@@ -139,6 +139,11 @@ def _load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_
 
 
 class GGUFPromptRewriter:
+    # Class-level shared cache (shared across all node instances)
+    _shared_cache = OrderedDict()
+    _shared_cache_lock = threading.Lock()
+    _cache_size = 200  # Larger since it's shared across all instances
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -170,12 +175,6 @@ class GGUFPromptRewriter:
     FUNCTION = "rewrite"
     CATEGORY = "prompt/LLM"
 
-    def __init__(self):
-        # LRU cache : { cache_key: (normalized_output, raw_output) }
-        self._cache = OrderedDict()
-        self._cache_size = 50
-        self._cache_lock = threading.Lock()
-
     def rewrite(
         self,
         model,
@@ -199,17 +198,17 @@ class GGUFPromptRewriter:
         
         cache_key = (
             model,
-            user_prompt,
-            system_prompt,
+            user_prompt.strip(),
+            system_prompt.strip(),
             enable_thinking,
             seed,
             max_tokens,
-            temperature,
-            top_p,
+            round(temperature, 2),
+            round(top_p, 2),
             top_k,
-            min_p,
-            presence_penalty,
-            repeat_penalty,
+            round(min_p, 2),
+            round(presence_penalty, 2),
+            round(repeat_penalty, 2),
             n_ctx,
             n_batch,
             n_gpu_layers,
@@ -217,27 +216,19 @@ class GGUFPromptRewriter:
         )
 
         # ------------------------------------------------------------
-        # LOG IMMEDIATELY WHEN PROMPT ARRIVES
-        # ------------------------------------------------------------
-        if not ignore_cache:
-            with self._cache_lock:
-                cache_hit = cache_key in self._cache
-            if cache_hit:
-                print("[INFO] GGUF Rewriter -> Input prompt found, using cached")
-            else:
-                print(f"[INFO] GGUF Rewriter -> New prompt found: {user_prompt[:80]}")
-        else:
-            print(f"[INFO] GGUF Rewriter -> Cache bypassed, forcing rewrite: {user_prompt[:80]}")
-
-        # ------------------------------------------------------------
         # LRU CACHE CHECK
         # ------------------------------------------------------------
         if not ignore_cache:
-            with self._cache_lock:
-                if cache_key in self._cache:
-                    self._cache.move_to_end(cache_key)
-                    normalized_cached, raw_cached = self._cache[cache_key]
+            with self._shared_cache_lock:
+                if cache_key in self._shared_cache:
+                    print("[INFO] GGUF Rewriter -> Input prompt found, using cached")
+                    self._shared_cache.move_to_end(cache_key)
+                    normalized_cached, raw_cached = self._shared_cache[cache_key]
                     return (normalized_cached, raw_cached)
+                else:
+                    print(f"[INFO] GGUF Rewriter -> New prompt found: {user_prompt[:80]}")
+        else:
+            print(f"[INFO] GGUF Rewriter -> Cache bypassed, forcing rewrite: {user_prompt[:80]}")
 
         if model == "No GGUF models found":
             raise ValueError("No GGUF models found. Put GGUF files in ComfyUI/models/llm_gguf or ~/AI.")
@@ -274,14 +265,14 @@ class GGUFPromptRewriter:
         # ------------------------------------------------------------
         # UPDATE LRU CACHE
         # ------------------------------------------------------------
-        with self._cache_lock:
+        with self._shared_cache_lock:
             # Store both normalized and raw output
-            self._cache[cache_key] = (normalized, raw_text)
-            self._cache.move_to_end(cache_key)
+            self._shared_cache[cache_key] = (normalized, raw_text)
+            self._shared_cache.move_to_end(cache_key)
 
             # Enforce max size
-            if len(self._cache) > self._cache_size:
-                self._cache.popitem(last=False)  # remove oldest
+            if len(self._shared_cache) > self._cache_size:
+                self._shared_cache.popitem(last=False)  # remove oldest
 
         return (normalized, raw_text)
 
