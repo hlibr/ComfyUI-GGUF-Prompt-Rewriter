@@ -10,4 +10,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = []
+py-modules = ["nodes"]
