@@ -21,7 +21,8 @@ Rules:
 _MODEL_LOCK = threading.Lock()
 
 # Optional resident model cache, used only when keep_model_in_memory=True.
-# Keyed by load configuration so toggling e.g. enable_thinking loads a separate model.
+# Keyed by load configuration (path + context params); enable_thinking is a
+# per-generation parameter and therefore not part of the key.
 _MODEL_CACHE: "dict[tuple, dict]" = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 _MODEL_CACHE_SIZE = 1  # max models kept resident; raise if you juggle several
@@ -86,8 +87,8 @@ def _close_model(model):
             pass
 
 
-def _load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_threads: int, enable_thinking: bool):
-    model = Llama(
+def _load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_threads: int):
+    return Llama(
         model_path=model_path,
         n_ctx=n_ctx,
         n_batch=n_batch,
@@ -96,20 +97,6 @@ def _load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_
         verbose=False,
     )
 
-    import llama_cpp.llama_chat_format
-
-    base_chat_handler = (
-        model.chat_handler
-        or model._chat_handlers.get(model.chat_format)
-        or llama_cpp.llama_chat_format.get_chat_completion_handler(model.chat_format)
-    )
-
-    def chat_handler_with_kwargs(*args, **kwargs):
-        return base_chat_handler(*args, **{"enable_thinking": enable_thinking, **kwargs})
-
-    model.chat_handler = chat_handler_with_kwargs
-    return model
-
 
 def _acquire_model(
     model_path: str,
@@ -117,7 +104,6 @@ def _acquire_model(
     n_batch: int,
     n_gpu_layers: int,
     n_threads: int,
-    enable_thinking: bool,
     keep_model_in_memory: bool,
 ):
     """Return (model, should_close).
@@ -125,21 +111,24 @@ def _acquire_model(
     When keep_model_in_memory is False the model is loaded fresh and the caller
     must close it after use (original behaviour). When True a resident model is
     returned from the cache and must NOT be closed by the caller.
+
+    Note: enable_thinking is passed per generation (create_chat_completion), not
+    at load time, so it does not affect which model instance is cached.
     """
     if not keep_model_in_memory:
         return (
-            _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking),
+            _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads),
             True,
         )
 
-    key = (model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
+    key = (model_path, n_ctx, n_batch, n_gpu_layers, n_threads)
     with _MODEL_CACHE_LOCK:
         entry = _MODEL_CACHE.get(key)
         if entry is not None:
             entry["last"] = time.time()
             return entry["model"], False
 
-        model = _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
+        model = _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads)
         _MODEL_CACHE[key] = {"model": model, "last": time.time()}
         # Evict least-recently-used beyond the cap. Safe because the caller holds
         # _MODEL_LOCK, so no other thread can be using a cached model right now.
@@ -252,7 +241,7 @@ class GGUFPromptRewriter:
 
         with _MODEL_LOCK:
             llm, should_close = _acquire_model(
-                model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking, keep_model_in_memory
+                model_path, n_ctx, n_batch, n_gpu_layers, n_threads, keep_model_in_memory
             )
             response = None
             try:
@@ -269,6 +258,7 @@ class GGUFPromptRewriter:
                     presence_penalty=presence_penalty,
                     repeat_penalty=repeat_penalty,
                     seed=seed,
+                    enable_thinking=enable_thinking,
                 )
             finally:
                 if should_close:
