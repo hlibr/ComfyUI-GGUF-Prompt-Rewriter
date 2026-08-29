@@ -200,8 +200,21 @@ class GGUFPromptRewriter:
         n_threads=0,
     ):
         
+        # Resolve the model file up front so the cache key identifies the actual
+        # file (path + mtime + size), not just its name. This invalidates cached
+        # outputs when a GGUF is swapped for a different file with the same name.
+        if model == "No GGUF models found":
+            raise ValueError("No GGUF models found. Put GGUF files in the ComfyUI models/llm_gguf folder.")
+
+        try:
+            model_path = _resolve_model_path(model)
+            _st = os.stat(model_path)
+            model_identity = (model_path, _st.st_mtime, _st.st_size)
+        except Exception:
+            model_identity = (model,)
+
         cache_key = (
-            model,
+            model_identity,
             user_prompt.strip(),
             system_prompt.strip(),
             enable_thinking,
@@ -233,11 +246,6 @@ class GGUFPromptRewriter:
                     print(f"[INFO] GGUF Rewriter -> New prompt found: {user_prompt[:80]}")
         else:
             print(f"[INFO] GGUF Rewriter -> Cache bypassed, forcing rewrite: {user_prompt[:80]}")
-
-        if model == "No GGUF models found":
-            raise ValueError("No GGUF models found. Put GGUF files in the ComfyUI models/llm_gguf folder.")
-
-        model_path = _resolve_model_path(model)
 
         with _MODEL_LOCK:
             llm, should_close = _acquire_model(
