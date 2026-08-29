@@ -2,6 +2,7 @@ import gc
 import os
 import re
 import threading
+import time
 
 import folder_paths
 from llama_cpp import Llama
@@ -19,28 +20,31 @@ Rules:
 
 _MODEL_LOCK = threading.Lock()
 
+# Optional resident model cache, used only when keep_model_in_memory=True.
+# Keyed by load configuration so toggling e.g. enable_thinking loads a separate model.
+_MODEL_CACHE: "dict[tuple, dict]" = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+_MODEL_CACHE_SIZE = 1  # max models kept resident; raise if you juggle several
+
 
 def _register_llm_gguf_paths():
     key = "llm_gguf"
-    user_models_dir = os.path.join(
-        os.path.dirname(folder_paths.get_user_directory()),
-        "models",
-        "llm_gguf",
-    )
-    home_ai_dir = os.path.expanduser("~/AI")
+    # Default location, correctly tracking --models-directory / --base-directory.
+    # Any folders the user added for "llm_gguf" via extra_model_paths.yaml are
+    # preserved (add_model_folder_path prepends rather than replacing).
+    default_dir = os.path.join(folder_paths.models_dir, "llm_gguf")
     try:
-        os.makedirs(user_models_dir, exist_ok=True)
+        os.makedirs(default_dir, exist_ok=True)
     except Exception:
         pass
 
-    existing = folder_paths.folder_names_and_paths.get(key, ([], set()))
-    existing_dirs = list(existing[0]) if isinstance(existing[0], (list, tuple, set)) else []
-    dirs = []
-    for path in [user_models_dir, home_ai_dir, *existing_dirs]:
-        if path and path not in dirs and (path == user_models_dir or os.path.exists(path)):
-            dirs.append(path)
+    folder_paths.add_model_folder_path(key, default_dir, is_default=True)
 
-    folder_paths.folder_names_and_paths[key] = (dirs, {".gguf"})
+    # Restrict to .gguf files (add_model_folder_path registers with an empty extension set)
+    folder_paths.folder_names_and_paths[key] = (
+        folder_paths.folder_names_and_paths[key][0],
+        {".gguf"},
+    )
 
 
 _register_llm_gguf_paths()
@@ -55,44 +59,9 @@ def _get_model_choices():
 
 
 def _resolve_model_path(model_name: str) -> str:
-    return folder_paths.get_full_path("llm_gguf", model_name)
+    return folder_paths.get_full_path_or_raise("llm_gguf", model_name)
 
 
-# def _build_prompt(template: str, system_prompt: str, user_prompt: str) -> tuple[str, list[str]]:
-#     system_prompt = system_prompt.strip()
-#     user_prompt = user_prompt.strip()
-
-#     if template == "gemma":
-#         prompt = (
-#             "<|turn>system\n"
-#             f"You are a helpful assistant.<turn|>\n"
-#             f"<|turn>user\n"
-#             "Hello.<turn|>"
-#         )
-#         return prompt, ["<end_of_turn>"]
-
-#     if template == "llama3":
-#         prompt = (
-#             "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
-#             f"{system_prompt}<|eot_id|>"
-#             "<|start_header_id|>user<|end_header_id|>\n\n"
-#             f"{user_prompt}<|eot_id|>"
-#             "<|start_header_id|>assistant<|end_header_id|>\n\n"
-#         )
-#         return prompt, ["<|eot_id|>"]
-
-#     if template == "chatml":
-#         prompt = (
-#             "<|im_start|>system\n"
-#             f"{system_prompt}<|im_end|>\n"
-#             "<|im_start|>user\n"
-#             f"{user_prompt}<|im_end|>\n"
-#             "<|im_start|>assistant\n"
-#         )
-#         return prompt, ["<|im_end|>"]
-
-#     prompt = f"{system_prompt}\n\n{user_prompt}".strip()
-#     return prompt, []
 
 
 def _normalize_output(text: str) -> str:
@@ -142,6 +111,45 @@ def _load_model(model_path: str, n_ctx: int, n_batch: int, n_gpu_layers: int, n_
     return model
 
 
+def _acquire_model(
+    model_path: str,
+    n_ctx: int,
+    n_batch: int,
+    n_gpu_layers: int,
+    n_threads: int,
+    enable_thinking: bool,
+    keep_model_in_memory: bool,
+):
+    """Return (model, should_close).
+
+    When keep_model_in_memory is False the model is loaded fresh and the caller
+    must close it after use (original behaviour). When True a resident model is
+    returned from the cache and must NOT be closed by the caller.
+    """
+    if not keep_model_in_memory:
+        return (
+            _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking),
+            True,
+        )
+
+    key = (model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
+    with _MODEL_CACHE_LOCK:
+        entry = _MODEL_CACHE.get(key)
+        if entry is not None:
+            entry["last"] = time.time()
+            return entry["model"], False
+
+        model = _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
+        _MODEL_CACHE[key] = {"model": model, "last": time.time()}
+        # Evict least-recently-used beyond the cap. Safe because the caller holds
+        # _MODEL_LOCK, so no other thread can be using a cached model right now.
+        if len(_MODEL_CACHE) > _MODEL_CACHE_SIZE:
+            old_key = min(_MODEL_CACHE, key=lambda k: _MODEL_CACHE[k]["last"])
+            old = _MODEL_CACHE.pop(old_key)
+            _close_model(old["model"])
+    return model, False
+
+
 class GGUFPromptRewriter:
     # Class-level shared cache (shared across all node instances)
     _shared_cache = OrderedDict()
@@ -158,7 +166,8 @@ class GGUFPromptRewriter:
             "optional": {
                 "system_prompt": ("STRING", {"default": DEFAULT_SYSTEM_PROMPT, "multiline": True}),
                 "enable_thinking": ("BOOLEAN", {"default": False}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 2**32 - 1}),
+                # -1 = random seed; 0 or positive = fixed/deterministic
+                "seed": ("INT", {"default": 0, "min": -1, "max": 2**32 - 1}),
                 "max_tokens": ("INT", {"default": 160, "min": 1, "max": 32768, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.05}),
@@ -171,6 +180,7 @@ class GGUFPromptRewriter:
                 "n_gpu_layers": ("INT", {"default": -1, "min": -1, "max": 999, "step": 1}),
                 "n_threads": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
                 "ignore_cache": ("BOOLEAN", {"default": False}),
+                "keep_model_in_memory": ("BOOLEAN", {"default": False}),
             },
         }
 
@@ -186,6 +196,7 @@ class GGUFPromptRewriter:
         system_prompt=DEFAULT_SYSTEM_PROMPT,
         enable_thinking=False,
         ignore_cache=False,
+        keep_model_in_memory=False,
         seed=0,
         max_tokens=160,
         temperature=0.5,
@@ -235,16 +246,16 @@ class GGUFPromptRewriter:
             print(f"[INFO] GGUF Rewriter -> Cache bypassed, forcing rewrite: {user_prompt[:80]}")
 
         if model == "No GGUF models found":
-            raise ValueError("No GGUF models found. Put GGUF files in ComfyUI/models/llm_gguf or ~/AI.")
+            raise ValueError("No GGUF models found. Put GGUF files in the ComfyUI models/llm_gguf folder.")
 
         model_path = _resolve_model_path(model)
-        if not model_path or not os.path.exists(model_path):
-            raise ValueError(f"Could not resolve GGUF model path for: {model}")
 
         with _MODEL_LOCK:
-            llm = None
+            llm, should_close = _acquire_model(
+                model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking, keep_model_in_memory
+            )
+            response = None
             try:
-                llm = _load_model(model_path, n_ctx, n_batch, n_gpu_layers, n_threads, enable_thinking)
                 response = llm.create_chat_completion(
                     messages=[
                         {"role": "system", "content": system_prompt.strip()},
@@ -260,9 +271,13 @@ class GGUFPromptRewriter:
                     seed=seed,
                 )
             finally:
-                _close_model(llm)
-                llm = None
-                gc.collect()
+                if should_close:
+                    _close_model(llm)
+                    llm = None
+                    gc.collect()
+
+        if response is None:
+            raise RuntimeError("GGUF model failed to produce a response (see logs above).")
         raw_text = response["choices"][-1]["message"]["content"]
         normalized = _normalize_output(raw_text)
 

@@ -21,16 +21,35 @@ Outputs:
 Notes:
 
 - Tested with uncensored Gemma 4 and Qwen3.6 models
-- The node loads the model for each run and closes it immediately afterward, so it does not keep a cached model in memory.
+- By default the node loads the model for each run and closes it immediately afterward, so it does not keep a cached model in memory. Enable `keep_model_in_memory` to keep the model resident between runs (faster, but uses VRAM).
 
 ## Model Locations
 
-The node scans these directories for `.gguf` files:
+The node scans ComfyUI's `models/llm_gguf` folder for `.gguf` files. This follows the `--models-directory` / `--base-directory` launch settings, and any additional folders you configure for `llm_gguf` in `extra_model_paths.yaml`.
 
-- `ComfyUI/models/llm_gguf`
-- `~/AI`
+Put your local GGUF files in `ComfyUI/models/llm_gguf` and restart ComfyUI.
 
-Put your local GGUF files in either location and restart ComfyUI.
+## GPU Support
+
+`llama-cpp-python`'s prebuilt wheels are **CPU-only**. To actually use your GPU (Metal on macOS, CUDA on Windows/Linux) you must install a GPU-enabled build, then set `n_gpu_layers` to a value greater than 0 (e.g. `-1` for all layers).
+
+Reinstall with the appropriate backend (use the ComfyUI venv's `pip`):
+
+- **macOS (Metal / Apple Silicon):**
+  ```bash
+  CMAKE_ARGS="-DGGML_METAL=ON" /path/to/ComfyUI/.venv/bin/pip install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
+  ```
+- **Windows (CUDA):** requires the Visual Studio C++ build tools and the CUDA toolkit.
+  ```bat
+  set CMAKE_ARGS=-DGGML_CUDA=ON
+  path\to\ComfyUI\.venv\Scripts\pip install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
+  ```
+- **Linux (CUDA):**
+  ```bash
+  CMAKE_ARGS="-DGGML_CUDA=ON" pip install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
+  ```
+
+Verify it worked by checking ComfyUI's startup log: it should report a `metal`/`CUDA` backend when the model loads, and inference will be dramatically faster.
 
 ## Installation
 
