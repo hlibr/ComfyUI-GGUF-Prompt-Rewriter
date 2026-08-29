@@ -1,6 +1,8 @@
 # ComfyUI GGUF Prompt Rewriter
 
-A ComfyUI node that runs a local GGUF LLM (via `llama-cpp-python`) and returns its text output. It exposes the full chat-completion interface — system prompt, user prompt, and sampling parameters — so it can be used for prompt rewriting, booru-style tag generation, captioning, translation, or any other local text-generation task. By default it ships with a system prompt tuned for rewriting prompts into danbooru-style tags.
+A ComfyUI node that runs a local GGUF LLM (via `llama-cpp-python`) and returns its text output. It exposes the full chat-completion interface — system prompt, user prompt, and sampling parameters — so it can be used for prompt rewriting, booru-style tag generation, captioning, translation, or any other local text-generation task.
+
+By default it ships with a system prompt tuned for rewriting prompts into danbooru-style tags.
 
 <img width="292" height="618" alt="Screenshot 2026-05-01 at 10 00 45 AM" src="https://github.com/user-attachments/assets/0393bfb2-e3ef-44dc-af4f-0b46d54d91b2" />
 
@@ -9,20 +11,20 @@ A ComfyUI node that runs a local GGUF LLM (via `llama-cpp-python`) and returns i
 Clone into your ComfyUI `custom_nodes` directory and install the dependency into ComfyUI's venv:
 
 ```bash
-cd /path/to/ComfyUI/custom_nodes
+cd ComfyUI/custom_nodes
 git clone https://github.com/hlibr/ComfyUI-GGUF-Prompt-Rewriter.git
-/path/to/ComfyUI/.venv/bin/python -m pip install -r /path/to/ComfyUI/custom_nodes/ComfyUI-GGUF-Prompt-Rewriter/requirements.txt
+ComfyUI/.venv/bin/python -m pip install -r ComfyUI/custom_nodes/ComfyUI-GGUF-Prompt-Rewriter/requirements.txt
 ```
 
 Restart ComfyUI.
 
 ## Model location
 
-The node scans `models/llm_gguf` for `.gguf` files (respecting `--models-directory` / `--base-directory` and any `extra_model_paths.yaml` entries). Drop your GGUF there and restart ComfyUI; it appears in the node's **model** dropdown.
+The node scans `models/llm_gguf` for `.gguf` files (respecting `--models-directory` / `--base-directory` and any `extra_model_paths.yaml` entries). Drop your GGUF there and restart ComfyUI.
 
 ## GPU support (optional)
 
-`llama-cpp-python`'s prebuilt wheels are CPU-only. To use your GPU (Metal on macOS, CUDA on Windows/Linux), install a GPU-enabled build; the default `n_gpu_layers = -1` then offloads all layers to the GPU. The node runs on CPU without this — just slower.
+`llama-cpp-python`'s prebuilt wheels are CPU-only. To use your GPU (Metal on macOS, CUDA on Windows/Linux), install a GPU-enabled build:
 
 ```bash
 # macOS (Metal)
@@ -34,13 +36,11 @@ path\to\ComfyUI\.venv\Scripts\python -m pip install --upgrade --force-reinstall 
 CMAKE_ARGS="-DGGML_CUDA=ON" /path/to/ComfyUI/.venv/bin/python -m pip install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
 ```
 
-Check ComfyUI's startup log for a `metal`/`CUDA` backend line to confirm.
-
 ## Usage
 
 The node (category `prompt/LLM`) loads the selected `.gguf` and runs a chat completion with the given `system_prompt` and `user_prompt`.
 
-**Outputs:** `rewritten_prompt` (cleaned result) and `raw_output` (model reply before cleanup).
+**Outputs:** `rewritten_prompt` (cleaned result with thinking stripped) and `raw_output` (model reply before cleanup).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -64,10 +64,6 @@ The node (category `prompt/LLM`) loads the selected `.gguf` and runs a chat comp
 | `keep_model_in_memory` | bool | `False` | Keep model loaded between runs (faster, uses VRAM). |
 
 Tested with uncensored Gemma 4 and Qwen3.6 models.
-
-## Dependencies
-
-ComfyUI provides the node runtime and `folder_paths`.
 
 ## License
 
