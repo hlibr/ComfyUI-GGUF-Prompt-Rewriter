@@ -25,7 +25,7 @@ _MODEL_LOCK = threading.Lock()
 # per-generation parameter and therefore not part of the key.
 _MODEL_CACHE: "dict[tuple, dict]" = {}
 _MODEL_CACHE_LOCK = threading.Lock()
-_MODEL_CACHE_SIZE = 1  # max models kept resident; raise if you juggle several
+_MODEL_CACHE_SIZE = 1  # max models kept resident; increase if you load several models at once
 
 
 def _register_llm_gguf_paths():
@@ -211,6 +211,8 @@ class GGUFPromptRewriter:
             _st = os.stat(model_path)
             model_identity = (model_path, _st.st_mtime, _st.st_size)
         except Exception:
+            # Fall back to the bare name if the file can't be resolved/stated
+            # (e.g. missing); the lookup then simply won't match a later valid hit.
             model_identity = (model,)
 
         cache_key = (
